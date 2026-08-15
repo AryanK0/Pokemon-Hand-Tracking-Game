@@ -2,18 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import creature1 from './assets/creature1.png';
 import creature2 from './assets/creature2.png';
 import creature3 from './assets/creature3.png';
+import charminder from './assets/charminder.png';
+import water from './assets/water.png';
+import rhagar from './assets/rhagar.png';
+import rocket from './assets/rocket.png';
+import villain from './assets/villain.png';
+
 import './App.css';
 
-const CANVAS_WIDTH = 960;
-const CANVAS_HEIGHT = 680;
-const TRAIL_LENGTH = 10;
+const TRAIL_LENGTH = 10
 const MOTION_THRESHOLD = 25;
 const SAMPLE_STEP = 3;
 const SMOOTHING = 0.45;
 const MAX_MISSES = 3;
 
-const BASE_SPAWN_INTERVAL = 1800;
-const MIN_SPAWN_INTERVAL = 650;
+const BASE_SPAWN_INTERVAL = 1500;
+const MIN_SPAWN_INTERVAL = 500;
 const BASE_GRAVITY = 0.22;
 const MAX_GRAVITY = 0.4;
 const BASE_LAUNCH_SPEED = 12;
@@ -22,9 +26,14 @@ const DIFFICULTY_STEP = 5;
 const MAX_DIFFICULTY_LEVEL = 6;
 
 const GOOD_CREATURE_IMAGES = [creature1, creature2];
-const BAD_CREATURE_IMAGE = creature3;
-const BAD_SPAWN_CHANCE = 0.25;
-const AVATAR_BOX_SIZE = 160;
+const BONUS_CREATURE_IMAGES = [rhagar, rocket, villain];
+const BAD_CREATURE_IMAGES = [creature3, charminder, water];
+const BAD_SPAWN_CHANCE = 0.35;
+const BONUS_SPAWN_CHANCE = 0.35;
+const AVATAR_BOX_SIZE = 150;
+
+// Backend URL — change this if you deploy the backend somewhere else
+const API_URL = 'http://localhost:5000';
 
 function App() {
   const videoRef = useRef(null);
@@ -33,7 +42,13 @@ function App() {
   const objectsRef = useRef([]);
   const halvesRef = useRef([]);
   const particlesRef = useRef([]);
+  const sparklesRef = useRef([]);
+  const confettiRef = useRef([]);
   const flashRef = useRef(null);
+  const shouldSpawnSparklesRef = useRef(false);
+  const sparkleCounterRef = useRef(0);
+  const celebrationCounterRef = useRef(0);
+  const celebrationTriggeredRef = useRef(false);
   const punchRef = useRef(0);
   const lastSpawnRef = useRef(0);
   const trailRef = useRef([]);
@@ -42,12 +57,20 @@ function App() {
   const smoothedPosRef = useRef(null);
   const missesRef = useRef(0);
   const gameOverRef = useRef(false);
+  const nameSubmittedRef = useRef(false);
+  const playerNameRef = useRef('');
 
   const [status, setStatus] = useState('Requesting camera access...');
   const [score, setScore] = useState(0);
   const [misses, setMisses] = useState(0);
   const [gameOver, setGameOver] = useState(false);
   const [level, setLevel] = useState(1);
+  const [playerName, setPlayerName] = useState('');
+  const [nameSubmitted, setNameSubmitted] = useState(false);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [scoreSaved, setScoreSaved] = useState(false);
+  const [isTopScore, setIsTopScore] = useState(false);
+  const topScoreTriggeredRef = useRef(false);
 
   useEffect(() => {
     navigator.mediaDevices
@@ -55,7 +78,7 @@ function App() {
       .then((stream) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          setStatus('Camera connected — wave your hand to slice!');
+          setStatus('Camera ready — point a blue light at the screen');
         }
       })
       .catch((err) => {
@@ -67,9 +90,66 @@ function App() {
   }, []);
 
   useEffect(() => {
+    // Check if current score is a top score
+    if (nameSubmitted && !gameOver && leaderboard.length > 0) {
+      const isTop = leaderboard.some((entry) => scoreRef.current > entry.score);
+      if (isTop && !topScoreTriggeredRef.current) {
+        setIsTopScore(true);
+        shouldSpawnSparklesRef.current = true;
+        topScoreTriggeredRef.current = true;
+      } else if (!isTop) {
+        topScoreTriggeredRef.current = false;
+      }
+    }
+  }, [leaderboard, nameSubmitted, gameOver]);
+
+async function submitScore(finalScore) {
+  try {
+    const res = await fetch(`${API_URL}/api/scores`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: playerNameRef.current,
+        score: finalScore,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error('Score submission rejected:', await res.text());
+      return;
+    }
+
+    setScoreSaved(true);
+    await fetchLeaderboard();
+
+  } catch (err) {
+    console.error('Failed to submit score:', err);
+  }
+}
+
+async function fetchLeaderboard() {
+  try {
+    const res = await fetch(`${API_URL}/api/scores/top`);
+    const data = await res.json();
+    setLeaderboard(data);
+  } catch (err) {
+    console.error('Failed to fetch leaderboard:', err);
+  }
+}
+
+  useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     const motionCanvas = document.createElement('canvas');
     const MOTION_W = 160;
@@ -80,13 +160,83 @@ function App() {
 
     let animationId;
 
-    const loadedGoodImages = GOOD_CREATURE_IMAGES.map((src) => {
+    function stripWhiteBackground(img) {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = img.width || img.naturalWidth || 1;
+      tempCanvas.height = img.height || img.naturalHeight || 1;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.drawImage(img, 0, 0);
+
+      const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imageData.data;
+
+      const corners = [
+        [0, 0],
+        [tempCanvas.width - 1, 0],
+        [0, tempCanvas.height - 1],
+        [tempCanvas.width - 1, tempCanvas.height - 1],
+      ];
+
+      let bgR = 255;
+      let bgG = 255;
+      let bgB = 255;
+      let sampleCount = 0;
+
+      corners.forEach(([x, y]) => {
+        const i = (y * tempCanvas.width + x) * 4;
+        const a = data[i + 3];
+        if (a > 0) {
+          bgR += data[i];
+          bgG += data[i + 1];
+          bgB += data[i + 2];
+          sampleCount += 1;
+        }
+      });
+
+      if (sampleCount > 0) {
+        bgR = bgR / (sampleCount + 1);
+        bgG = bgG / (sampleCount + 1);
+        bgB = bgB / (sampleCount + 1);
+      }
+
+      const tolerance = 45;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+
+        const closeToBackground =
+          Math.abs(r - bgR) < tolerance &&
+          Math.abs(g - bgG) < tolerance &&
+          Math.abs(b - bgB) < tolerance;
+
+        if (a === 0 || closeToBackground) {
+          data[i + 3] = 0;
+        }
+      }
+
+      tempCtx.putImageData(imageData, 0, 0);
+      const cleaned = new Image();
+      cleaned.src = tempCanvas.toDataURL('image/png');
+      return cleaned;
+    }
+
+    function loadTransparentImage(src) {
       const img = new Image();
+      img.onload = () => {
+        const cleaned = stripWhiteBackground(img);
+        img.onload = null;
+        img.src = cleaned.src;
+      };
       img.src = src;
       return img;
-    });
-    const loadedBadImage = new Image();
-    loadedBadImage.src = BAD_CREATURE_IMAGE;
+    }
+
+    const loadedGoodImages = GOOD_CREATURE_IMAGES.map((src) => loadTransparentImage(src));
+    const loadedBonusImages = BONUS_CREATURE_IMAGES.map((src) => loadTransparentImage(src));
+    const loadedBadImages = BAD_CREATURE_IMAGES.map((src) => loadTransparentImage(src));
 
     function getDifficultyLevel() {
       return Math.min(
@@ -113,24 +263,47 @@ function App() {
       return BASE_LAUNCH_SPEED + t * (MAX_LAUNCH_SPEED - BASE_LAUNCH_SPEED);
     }
 
-    function spawnObject() {
+function spawnObject() {
       const isBad = Math.random() < BAD_SPAWN_CHANCE;
+      const isBonus = !isBad && Math.random() < BONUS_SPAWN_CHANCE;
       const launchSpeed = getLaunchSpeed();
-      const startX = 120 + Math.random() * (CANVAS_WIDTH - 240);
+
+      // Spawn from a safe in-screen range so objects stay visible and land inside the monitor.
+      const marginX = 120;
+      const startX = marginX + Math.random() * (canvas.width - marginX * 2);
+      const startY = canvas.height + 30;
+
+      // Randomize the launch direction: angle measured from straight up.
+      // 0 = straight up, negative = leaning left, positive = leaning right.
+      // Keeping it within roughly ±25 degrees to keep creatures more centered
+      // and reachable for a significant time by hand.
+      const maxLeanDegrees = 50;
+      const leanDegrees = (Math.random() * 2 - 1) * maxLeanDegrees; // -50 to +50
+      const leanRadians = (leanDegrees * Math.PI) / 180;
+
+      // Convert angle + speed into vx/vy components.
+      // "Straight up" in canvas terms is vy negative, vx zero.
+      const speedVariance = launchSpeed + Math.random() * 3;
+      const vx = Math.sin(leanRadians) * speedVariance;
+      const vy = -Math.cos(leanRadians) * speedVariance;
+
+      const goodPool = isBonus ? loadedBonusImages : loadedGoodImages;
 
       objectsRef.current.push({
         id: Date.now() + Math.random(),
         x: startX,
-        y: CANVAS_HEIGHT + 30,
+        y: startY,
         radius: 65,
-        vy: -(launchSpeed + Math.random() * 3),
-        vx: (Math.random() - 0.5) * 4,
+        vy,
+        vx,
         rotation: 0,
         rotSpeed: (Math.random() - 0.5) * 0.08,
         sliced: false,
         pastPeak: false,
         isBad,
-        imgIndex: isBad ? -1 : Math.floor(Math.random() * loadedGoodImages.length),
+        isBonus,
+        imgIndex: isBad ? Math.floor(Math.random() * loadedBadImages.length) : Math.floor(Math.random() * goodPool.length),
+        badImageIndex: isBad ? Math.floor(Math.random() * loadedBadImages.length) : 0,
       });
     }
 
@@ -149,8 +322,46 @@ function App() {
       }
     }
 
+    function spawnSparkles(x, y) {
+      const colors = ['#FFD700', '#FFF44F', '#FFEB3B', '#FFC107'];
+      for (let i = 0; i < 15; i += 1) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * 5;
+        sparklesRef.current.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 2,
+          life: 1,
+          size: 3 + Math.random() * 2,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+    }
+
+    function spawnConfetti(x, y) {
+      const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+      for (let i = 0; i < 25; i += 1) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 4 + Math.random() * 8;
+        confettiRef.current.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 3,
+          life: 1,
+          size: 4 + Math.random() * 4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rotation: Math.random() * Math.PI * 2,
+          rotSpeed: (Math.random() - 0.5) * 0.2,
+        });
+      }
+    }
+
     function spawnHalves(obj, sliceAngle) {
-      const img = obj.isBad ? loadedBadImage : loadedGoodImages[obj.imgIndex];
+      const img = obj.isBad
+        ? loadedBadImages[obj.badImageIndex ?? obj.imgIndex]
+        : (obj.isBonus ? loadedBonusImages[obj.imgIndex] : loadedGoodImages[obj.imgIndex]);
       const perp = sliceAngle + Math.PI / 2;
       const kick = 5;
 
@@ -171,7 +382,7 @@ function App() {
       });
     }
 
-    function detectMotion() {
+    function detectBlueLight() {
       motionCtx.save();
       motionCtx.scale(-1, 1);
       motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
@@ -180,34 +391,33 @@ function App() {
       const frame = motionCtx.getImageData(0, 0, MOTION_W, MOTION_H);
       const data = frame.data;
 
-      if (!prevFrameRef.current) {
-        prevFrameRef.current = data;
-        return null;
-      }
+      let sumX = 0;
+      let sumY = 0;
+      let totalWeight = 0;
 
-      const prev = prevFrameRef.current;
-      let sumX = 0, sumY = 0, totalWeight = 0;
-
-      for (let y = 0; y < MOTION_H; y += 1) {
+      for (let y = 0; y < MOTION_H; y += SAMPLE_STEP) {
         for (let x = 0; x < MOTION_W; x += SAMPLE_STEP) {
           const i = (y * MOTION_W + x) * 4;
-          const diff =
-            Math.abs(data[i] - prev[i]) +
-            Math.abs(data[i + 1] - prev[i + 1]) +
-            Math.abs(data[i + 2] - prev[i + 2]);
-          if (diff > MOTION_THRESHOLD * 3) {
-            sumX += x * diff;
-            sumY += y * diff;
-            totalWeight += diff;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const brightness = (r + g + b) / 3;
+          const blueBias = b - Math.max(r, g);
+
+          // Detect a bright blue object rather than arbitrary hand motion.
+          if (b > 80 && brightness > 35 && blueBias > 20 && b > r * 1.2 && b > g * 1.2) {
+            const weight = b * 0.7 + brightness * 0.8 + Math.max(blueBias, 0);
+            sumX += x * weight;
+            sumY += y * weight;
+            totalWeight += weight;
           }
         }
       }
 
-      prevFrameRef.current = data;
-      if (totalWeight < 2500) return null;
+      if (totalWeight < 350) return null;
 
-      const scaleX = CANVAS_WIDTH / MOTION_W;
-      const scaleY = CANVAS_HEIGHT / MOTION_H;
+      const scaleX = canvas.width / MOTION_W;
+      const scaleY = canvas.height / MOTION_H;
       const rawX = (sumX / totalWeight) * scaleX;
       const rawY = (sumY / totalWeight) * scaleY;
 
@@ -255,13 +465,15 @@ function App() {
             if (missesRef.current >= MAX_MISSES) {
               gameOverRef.current = true;
               setGameOver(true);
+              submitScore(scoreRef.current);
             }
             spawnParticles(obj.x, obj.y, '#ff3b3b');
           } else {
-            scoreRef.current += 1;
+            const scoreGain = obj.isBonus ? 2 : 1;
+            scoreRef.current += scoreGain;
             setScore(scoreRef.current);
             setLevel(getDifficultyLevel() + 1);
-            spawnParticles(obj.x, obj.y, '#ffcc00');
+            spawnParticles(obj.x, obj.y, obj.isBonus ? '#ffd166' : '#2ecc71');
           }
 
           spawnHalves(obj, sliceAngle);
@@ -272,23 +484,25 @@ function App() {
     }
 
     function drawCreature(obj) {
-      const img = obj.isBad ? loadedBadImage : loadedGoodImages[obj.imgIndex];
+      const img = obj.isBad
+        ? loadedBadImages[obj.badImageIndex ?? obj.imgIndex]
+        : (obj.isBonus ? loadedBonusImages[obj.imgIndex] : loadedGoodImages[obj.imgIndex]);
       if (!img.complete || img.naturalWidth === 0) return;
 
-      const glowColor = obj.isBad ? 'rgba(255, 59, 59, 0.55)' : 'rgba(255, 203, 60, 0.5)';
+      const ringColor = obj.isBad ? '#ff3b3b' : (obj.isBonus ? '#ffd166' : '#2ecc71');
 
       ctx.save();
       ctx.translate(obj.x, obj.y);
       ctx.rotate(obj.rotation);
 
-      const glowRadius = obj.radius * 1.15;
-      const grad = ctx.createRadialGradient(0, 0, obj.radius * 0.3, 0, 0, glowRadius);
-      grad.addColorStop(0, glowColor);
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.beginPath();
-      ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
+      ctx.arc(0, 0, obj.radius * 1.08, 0, Math.PI * 2);
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = ringColor;
+      ctx.shadowColor = ringColor;
+      ctx.shadowBlur = 12;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
 
       const size = obj.radius * 2;
       ctx.drawImage(img, -size / 2, -size / 2, size, size);
@@ -325,7 +539,7 @@ function App() {
         ctx.restore();
       });
       ctx.globalAlpha = 1;
-      halvesRef.current = halvesRef.current.filter((h) => h.life > 0 && h.y < CANVAS_HEIGHT + 200);
+      halvesRef.current = halvesRef.current.filter((h) => h.life > 0 && h.y < canvas.height + 200);
     }
 
     function drawParticles() {
@@ -342,6 +556,44 @@ function App() {
       });
       ctx.globalAlpha = 1;
       particlesRef.current = particlesRef.current.filter((p) => p.life > 0);
+    }
+
+    function drawSparkles() {
+      sparklesRef.current.forEach((s) => {
+        s.x += s.vx;
+        s.y += s.vy;
+        s.vy += 0.1;
+        s.life -= 0.04;
+        ctx.globalAlpha = Math.max(s.life, 0);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fillStyle = s.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = s.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+      ctx.globalAlpha = 1;
+      sparklesRef.current = sparklesRef.current.filter((s) => s.life > 0);
+    }
+
+    function drawConfetti() {
+      confettiRef.current.forEach((c) => {
+        c.x += c.vx;
+        c.y += c.vy;
+        c.vy += 0.25;
+        c.rotation += c.rotSpeed;
+        c.life -= 0.02;
+        ctx.globalAlpha = Math.max(c.life, 0);
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.rotate(c.rotation);
+        ctx.fillStyle = c.color;
+        ctx.fillRect(-c.size / 2, -c.size / 2, c.size, c.size);
+        ctx.restore();
+      });
+      ctx.globalAlpha = 1;
+      confettiRef.current = confettiRef.current.filter((c) => c.life > 0);
     }
 
     function drawFlash() {
@@ -409,107 +661,96 @@ function App() {
       const H = AVATAR_BOX_SIZE;
       actx.clearRect(0, 0, W, H);
 
-      const pos = smoothedPosRef.current;
-      let armAngle = -0.6;
-      if (pos) {
-        const dx = pos.x - CANVAS_WIDTH / 2;
-        const dy = pos.y - CANVAS_HEIGHT / 2;
-        armAngle = Math.atan2(dy, dx);
-      }
-
       const cx = W / 2;
-      const cy = H / 2 + 20;
+      const cy = H / 2;
 
-      actx.strokeStyle = '#5a4632';
-      actx.lineWidth = 8;
-      actx.lineCap = 'round';
-      actx.beginPath();
-      actx.moveTo(cx - 8, cy + 20);
-      actx.lineTo(cx - 12, cy + 45);
-      actx.moveTo(cx + 8, cy + 20);
-      actx.lineTo(cx + 12, cy + 45);
-      actx.stroke();
+      actx.fillStyle = '#0d1b2a';
+      actx.fillRect(0, 0, W, H);
 
-      actx.fillStyle = '#8a7250';
+      const pos = smoothedPosRef.current;
+      const targetX = pos ? Math.min(Math.max(pos.x / (canvas.width || 1) * W, 18), W - 18) : cx;
+      const targetY = pos ? Math.min(Math.max(pos.y / (canvas.height || 1) * H, 18), H - 18) : cy;
+
+      actx.shadowColor = '#3bb4ff';
+      actx.shadowBlur = 20;
+      actx.fillStyle = '#4dd0ff';
       actx.beginPath();
-      actx.ellipse(cx, cy, 22, 28, 0, 0, Math.PI * 2);
+      actx.arc(targetX, targetY, 18, 0, Math.PI * 2);
       actx.fill();
 
-      actx.strokeStyle = '#8a7250';
-      actx.lineWidth = 10;
-      actx.beginPath();
-      actx.moveTo(cx - 14, cy - 10);
-      actx.lineTo(cx - 26, cy + 8);
-      actx.stroke();
-      actx.fillStyle = '#d97a6c';
-      actx.beginPath();
-      actx.arc(cx - 26, cy + 8, 9, 0, Math.PI * 2);
-      actx.fill();
-
-      const armLen = 34;
-      const shoulderX = cx + 12;
-      const shoulderY = cy - 10;
-      const handX = shoulderX + Math.cos(armAngle) * armLen;
-      const handY = shoulderY + Math.sin(armAngle) * armLen * 0.6;
-
-      actx.strokeStyle = '#8a7250';
-      actx.lineWidth = 10;
-      actx.beginPath();
-      actx.moveTo(shoulderX, shoulderY);
-      actx.lineTo(handX, handY);
-      actx.stroke();
-
-      actx.fillStyle = '#e8544a';
-      actx.beginPath();
-      actx.arc(handX, handY, 11, 0, Math.PI * 2);
-      actx.fill();
-      actx.strokeStyle = '#a8342c';
+      actx.shadowBlur = 0;
+      actx.strokeStyle = '#b7ecff';
       actx.lineWidth = 2;
+      actx.beginPath();
+      actx.arc(targetX, targetY, 26, 0, Math.PI * 2);
       actx.stroke();
 
-      actx.fillStyle = '#a08860';
-      actx.beginPath();
-      actx.arc(cx, cy - 32, 16, 0, Math.PI * 2);
-      actx.fill();
-
-      actx.fillStyle = '#1a1a1a';
-      actx.beginPath();
-      actx.arc(cx - 5, cy - 34, 2, 0, Math.PI * 2);
-      actx.arc(cx + 5, cy - 34, 2, 0, Math.PI * 2);
-      actx.fill();
-
-      actx.fillStyle = '#2c4a2c';
-      actx.font = 'bold 11px Arial';
-      actx.textAlign = 'center';
-      actx.fillText('YOUR FIGHTER', cx, H - 8);
+      actx.fillStyle = '#1d3557';
+      actx.fillRect(0, H - 24, W, 24);
     }
 
     function drawFrame(timestamp) {
+      // Spawn sparkles for top score periodically
+      if (isTopScore) {
+        sparkleCounterRef.current += 1;
+        if (sparkleCounterRef.current % 15 === 0) {
+          spawnSparkles(canvas.width / 2, 80);
+        }
+      } else {
+        sparkleCounterRef.current = 0;
+      }
+
+      // Spawn celebration confetti when game ends
+      if (gameOverRef.current && !celebrationTriggeredRef.current) {
+        for (let i = 0; i < 8; i += 1) {
+          spawnConfetti(
+            canvas.width / 2 + (Math.random() - 0.5) * 200,
+            canvas.height / 3
+          );
+        }
+        celebrationTriggeredRef.current = true;
+      }
+
+      // Continue spawning confetti during celebration
+      if (gameOverRef.current) {
+        celebrationCounterRef.current += 1;
+        if (celebrationCounterRef.current % 12 === 0) {
+          for (let i = 0; i < 3; i += 1) {
+            spawnConfetti(
+              canvas.width / 2 + (Math.random() - 0.5) * 250,
+              canvas.height / 4 + (Math.random() - 0.5) * 50
+            );
+          }
+        }
+      } else {
+        celebrationCounterRef.current = 0;
+      }
+
       punchRef.current = Math.max(punchRef.current - 0.08, 0);
       const zoom = 1 + punchRef.current * 0.015;
 
       ctx.save();
-      ctx.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+      ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.scale(zoom, zoom);
-      ctx.translate(-CANVAS_WIDTH / 2, -CANVAS_HEIGHT / 2);
+      ctx.translate(-canvas.width / 2, -canvas.height / 2);
 
       if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
         ctx.save();
         ctx.scale(-1, 1);
-        ctx.drawImage(video, -CANVAS_WIDTH, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
         ctx.restore();
 
-        const motionPoint = detectMotion();
+        const motionPoint = detectBlueLight();
         if (motionPoint) {
           trailRef.current.push(motionPoint);
           if (trailRef.current.length > TRAIL_LENGTH) trailRef.current.shift();
         }
       } else {
-        ctx.fillStyle = '#111';
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
-      if (!gameOverRef.current) {
+      if (!gameOverRef.current && nameSubmittedRef.current) {
         if (!lastSpawnRef.current) lastSpawnRef.current = timestamp;
         if (timestamp - lastSpawnRef.current > getSpawnInterval()) {
           spawnObject();
@@ -524,18 +765,29 @@ function App() {
         obj.vy += gravity;
         obj.y += obj.vy;
         obj.x += obj.vx;
+
+        const minX = 60;
+        const maxX = canvas.width - 60;
+        if (obj.x < minX || obj.x > maxX) {
+          obj.x = Math.min(Math.max(obj.x, minX), maxX);
+          obj.vx *= -0.35;
+        }
+
+      
+
         obj.rotation += obj.rotSpeed;
         if (obj.vy > 0) obj.pastPeak = true;
       });
 
       objectsRef.current.forEach((obj) => {
-        if (!obj.sliced && obj.pastPeak && obj.y - obj.radius >= CANVAS_HEIGHT) {
+        if (!obj.sliced && obj.pastPeak && obj.y - obj.radius >= canvas.height) {
           if (!obj.isBad) {
             missesRef.current += 1;
             setMisses(missesRef.current);
             if (missesRef.current >= MAX_MISSES) {
               gameOverRef.current = true;
               setGameOver(true);
+              submitScore(scoreRef.current);
             }
           }
         }
@@ -543,25 +795,27 @@ function App() {
 
       objectsRef.current = objectsRef.current.filter((obj) => {
         if (obj.sliced) return false;
-        if (obj.pastPeak && obj.y - obj.radius >= CANVAS_HEIGHT) return false;
+        if (obj.pastPeak && obj.y - obj.radius >= canvas.height) return false;
         return true;
       });
 
       objectsRef.current.forEach((obj) => drawCreature(obj));
       drawHalves();
       drawParticles();
+      drawSparkles();
+      drawConfetti();
       drawTrail();
       drawFlash();
 
       if (gameOverRef.current) {
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 44px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText('Game Over', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 16);
+        ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 16);
         ctx.font = '22px Arial';
-        ctx.fillText(`Final Score: ${scoreRef.current}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 26);
+        ctx.fillText(`Final Score: ${scoreRef.current}`, canvas.width / 2, canvas.height / 2 + 26);
       }
 
       ctx.restore();
@@ -572,13 +826,23 @@ function App() {
     }
 
     animationId = requestAnimationFrame(drawFrame);
-    return () => cancelAnimationFrame(animationId);
+    return () => {
+      cancelAnimationFrame(animationId);
+      window.removeEventListener('resize', resizeCanvas);
+    };
   }, []);
 
   function handleRestart() {
+    setNameSubmitted(false);
+    setPlayerName('');
+    setScoreSaved(false);
+    setIsTopScore(false);
+    nameSubmittedRef.current = false;
     objectsRef.current = [];
     halvesRef.current = [];
     particlesRef.current = [];
+    sparklesRef.current = [];
+    confettiRef.current = [];
     flashRef.current = null;
     punchRef.current = 0;
     trailRef.current = [];
@@ -587,6 +851,8 @@ function App() {
     missesRef.current = 0;
     gameOverRef.current = false;
     lastSpawnRef.current = 0;
+    topScoreTriggeredRef.current = false;
+    celebrationTriggeredRef.current = false;
     setScore(0);
     setMisses(0);
     setGameOver(false);
@@ -594,136 +860,216 @@ function App() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(180deg, #7ec8e3 0%, #a8dba8 55%, #6fb86f 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: "'Trebuchet MS', Verdana, sans-serif",
-        color: '#1a2e1a',
-        padding: '30px',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      <div style={blobStyle('#ffcb3c', -120, -80)} />
-      <div style={blobStyle('#ff6b6b', -100, 500)} />
-      <div style={blobStyle('#4a9fd6', 'calc(100% - 40px)', -60)} />
-      <div style={blobStyle('#7cb85c', 'calc(100% - 60px)', 520)} />
+    <div style={{ position: 'fixed', inset: 0, background: '#000', overflow: 'hidden' }}>
+      <video ref={videoRef} autoPlay playsInline style={{ display: 'none' }} />
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'fixed', top: 0, left: 0, display: 'block' }}
+      />
 
-      <h1
-        style={{
-          fontSize: '30px',
-          margin: '0 0 4px',
-          fontWeight: 800,
-          color: '#fff',
-          textShadow: '0 3px 0 #2c6e2c, 0 4px 6px rgba(0,0,0,0.25)',
-          letterSpacing: '1px',
-          zIndex: 2,
-        }}
-      >
-        CREATURE NINJA ARENA
-      </h1>
-      <p
-        style={{
-          color: status.includes('failed') ? '#c0392b' : '#2c4a2c',
-          marginBottom: '4px',
-          fontSize: '14px',
-          fontWeight: 600,
-          zIndex: 2,
-        }}
-      >
-        {status}
-      </p>
-      <p style={{ fontSize: '13px', color: '#2c4a2c', marginTop: '0', marginBottom: '14px', zIndex: 2 }}>
-        Slice the glowing creatures — avoid the red one!
-      </p>
-
-      <div style={{ display: 'flex', gap: '14px', marginBottom: '14px', zIndex: 2 }}>
-        <div style={badgeStyle('#4a9fd6')}>⚡ Score: {score}</div>
-        <div style={badgeStyle('#ffcb3c')}>🔥 Level: {level}</div>
-        <div style={badgeStyle('#ff6b6b')}>❤ Lives: {MAX_MISSES - misses}/{MAX_MISSES}</div>
-      </div>
+      {status && (
+        <p
+          style={{
+            position: 'fixed',
+            top: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: '#fff',
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '14px',
+            fontWeight: 600,
+            textShadow: '0 2px 6px rgba(0,0,0,0.8)',
+            zIndex: 3,
+          }}
+        >
+          {status}
+        </p>
+      )}
 
       <div
         style={{
-          borderRadius: '20px',
-          overflow: 'visible',
-          border: '6px solid #fff',
-          boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-          zIndex: 2,
-          position: 'relative',
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          gap: '28px',
+          color: '#fff',
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '20px',
+          fontWeight: 700,
+          textShadow: '0 2px 6px rgba(0,0,0,0.85)',
+          zIndex: 12,
         }}
       >
-        <video ref={videoRef} autoPlay playsInline style={{ display: 'none' }} />
-        <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} style={{ display: 'block', borderRadius: '14px' }} />
-        <canvas
-          ref={avatarCanvasRef}
-          width={AVATAR_BOX_SIZE}
-          height={AVATAR_BOX_SIZE}
-          style={{
-            position: 'absolute',
-            bottom: '14px',
-            right: '14px',
-            background: 'rgba(255,255,255,0.85)',
-            borderRadius: '12px',
-            border: '3px solid #ffcb3c',
-          }}
-        />
+        <span>Score: {score}</span>
+        <span>Level: {level}</span>
+        <span>Lives: {MAX_MISSES - misses}/{MAX_MISSES}</span>
       </div>
 
+      {nameSubmitted && !gameOver && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '80px',
+            left: '20px',
+            color: '#fff',
+            background: 'rgba(0,0,0,0.28)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '12px',
+            padding: '14px 18px',
+            textAlign: 'left',
+            minWidth: '180px',
+            fontFamily: 'Arial, sans-serif',
+            zIndex: 12,
+          }}
+        >
+          <p style={{ fontWeight: 700, margin: '0 0 8px', fontSize: '16px' }}>🏆 Leaderboard</p>
+          {leaderboard.length > 0 ? (
+            leaderboard.map((entry, i) => (
+              <p key={i} style={{ margin: '4px 0', fontSize: '14px' }}>
+                {i + 1}. {entry.name} — {entry.score}
+              </p>
+            ))
+          ) : (
+            <p style={{ margin: 0, fontSize: '14px' }}>No scores yet</p>
+          )}
+        </div>
+      )}
+
+      <canvas
+        ref={avatarCanvasRef}
+        width={AVATAR_BOX_SIZE}
+        height={AVATAR_BOX_SIZE}
+        style={{
+          position: 'fixed',
+          bottom: '30px',
+          right: '30px',
+          zIndex: 3,
+        }}
+      />
+
+      {!nameSubmitted && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.75)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 5,
+          }}
+        >
+          <p style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '12px' }}>
+            Enter your name to play
+          </p>
+          <input
+            type="text"
+            value={playerName}
+            onChange={(e) => setPlayerName(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && playerName.trim()) {
+                setNameSubmitted(true);
+                nameSubmittedRef.current = true;
+                playerNameRef.current = playerName.trim();
+              }
+            }}
+            placeholder="Your name"
+            style={{
+              padding: '10px 16px',
+              fontSize: '16px',
+              borderRadius: '8px',
+              border: 'none',
+              marginBottom: '12px',
+              width: '220px',
+              textAlign: 'center',
+            }}
+          />
+          <button
+         onClick={() => {
+              if (playerName.trim()) {
+                setNameSubmitted(true);
+                nameSubmittedRef.current = true;
+                playerNameRef.current = playerName.trim();
+              }
+            }}
+            style={{
+              padding: '10px 26px',
+              fontSize: '16px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              borderRadius: '999px',
+              border: 'none',
+              background: '#fff',
+              color: '#1a1a1a',
+            }}
+          >
+            Start Game
+          </button>
+        </div>
+      )}
+
       {gameOver && (
-        <button onClick={handleRestart} style={buttonStyle}>
-          Play Again
-        </button>
+        <div
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '38px',
+            zIndex: 4,
+            width: 'min(760px, 80vw)',
+          }}
+        >
+          <div
+            style={{
+              flex: '0 0 auto',
+              color: '#fff',
+              background: 'rgba(0,0,0,0.28)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '12px',
+              padding: '14px 18px',
+              textAlign: 'left',
+              minWidth: '180px',
+            }}
+          >
+            <p style={{ fontWeight: 700, margin: '0 0 8px' }}>🏆 Top 3</p>
+            {leaderboard.length > 0 ? (
+              leaderboard.map((entry, i) => (
+                <p key={i} style={{ margin: '4px 0' }}>
+                  {i + 1}. {entry.name} — {entry.score}
+                </p>
+              ))
+            ) : (
+              <p style={{ margin: 0 }}>No scores yet</p>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '150px',marginLeft:'55px'}}>
+            <button
+              onClick={handleRestart}
+              style={{
+                padding: '12px 30px',
+                fontSize: '16px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                borderRadius: '999px',
+                border: 'none',
+                background: '#fff',
+                color: '#1a1a1a',
+              }}
+            >
+              Play Again
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
 }
-
-function blobStyle(color, left, top) {
-  return {
-    position: 'absolute',
-    left,
-    top,
-    width: '260px',
-    height: '260px',
-    borderRadius: '50%',
-    background: color,
-    opacity: 0.35,
-    filter: 'blur(40px)',
-    zIndex: 1,
-  };
-}
-
-function badgeStyle(color) {
-  return {
-    padding: '10px 18px',
-    borderRadius: '999px',
-    background: '#fff',
-    border: `3px solid ${color}`,
-    color: '#1a2e1a',
-    fontWeight: 700,
-    fontSize: '15px',
-    boxShadow: '0 3px 0 rgba(0,0,0,0.15)',
-  };
-}
-
-const buttonStyle = {
-  marginTop: '20px',
-  padding: '12px 30px',
-  fontSize: '16px',
-  fontWeight: 700,
-  cursor: 'pointer',
-  borderRadius: '999px',
-  border: '3px solid #2c6e2c',
-  background: '#ffcb3c',
-  color: '#1a2e1a',
-  boxShadow: '0 4px 0 #2c6e2c',
-  zIndex: 2,
-};
 
 export default App;
