@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+node_modules/
+*/node_modules/
+.env
+.env.*
+*.log
+dist/
+*/dist/
+*.local
+fruitninja-backend/scores.json
+fruitninja-backend/scores.json

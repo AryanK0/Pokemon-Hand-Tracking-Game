@@ -7,30 +7,39 @@ import water from './assets/water.png';
 import rhagar from './assets/rhagar.png';
 import rocket from './assets/rocket.png';
 import villain from './assets/villain.png';
+import evil1 from './assets/evil1.png';
+import evil2 from './assets/evil2.png';
+import evil4 from './assets/evil4.png';
+import decent1 from './assets/decent1.png';
+import decent2 from './assets/decent2.png';
+import decent3 from './assets/decent3.png';
+import gold1 from './assets/gold1.png';
+import gold3 from './assets/gold3.png';
 
 import './App.css';
 
 const TRAIL_LENGTH = 10
 const MOTION_THRESHOLD = 25;
 const SAMPLE_STEP = 3;
-const SMOOTHING = 0.45;
+const SMOOTHING = 0.50;
 const MAX_MISSES = 3;
 
 const BASE_SPAWN_INTERVAL = 1500;
 const MIN_SPAWN_INTERVAL = 500;
-const BASE_GRAVITY = 0.22;
-const MAX_GRAVITY = 0.4;
-const BASE_LAUNCH_SPEED = 12;
-const MAX_LAUNCH_SPEED = 16.5;
+const BASE_GRAVITY = 0.40;
+const MAX_GRAVITY = 0.65;
+const BASE_LAUNCH_SPEED = 22;
+const MAX_LAUNCH_SPEED = 27;
 const DIFFICULTY_STEP = 5;
-const MAX_DIFFICULTY_LEVEL = 6;
+const MAX_DIFFICULTY_LEVEL = 7;
 
-const GOOD_CREATURE_IMAGES = [creature1, creature2];
-const BONUS_CREATURE_IMAGES = [rhagar, rocket, villain];
-const BAD_CREATURE_IMAGES = [creature3, charminder, water];
-const BAD_SPAWN_CHANCE = 0.35;
+const GOOD_CREATURE_IMAGES = [creature1, creature2, evil1, evil2, evil4];
+const BONUS_CREATURE_IMAGES = [rhagar, rocket, villain, gold1, gold3];
+const BAD_CREATURE_IMAGES = [creature3, charminder, water, decent1, decent2, decent3];
+const BAD_SPAWN_CHANCE = 0.30;
 const BONUS_SPAWN_CHANCE = 0.35;
-const AVATAR_BOX_SIZE = 150;
+const AVATAR_BOX_WIDTH = 200;
+const AVATAR_BOX_HEIGHT = 150;
 
 // Backend URL — change this if you deploy the backend somewhere else
 const API_URL = 'http://localhost:5000';
@@ -50,6 +59,8 @@ function App() {
   const celebrationCounterRef = useRef(0);
   const celebrationTriggeredRef = useRef(false);
   const punchRef = useRef(0);
+  const levelUpAnimRef = useRef(0); // 0 = not showing, >0 = counts down while showing
+  const lastLevelRef = useRef(1);
   const lastSpawnRef = useRef(0);
   const trailRef = useRef([]);
   const scoreRef = useRef(0);
@@ -452,35 +463,60 @@ function spawnObject() {
       if (speed < 4) return;
 
       const sliceAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    objectsRef.current.forEach((obj) => {
+  if (obj.sliced) return;
 
-      objectsRef.current.forEach((obj) => {
-        if (obj.sliced) return;
-        const dist = pointToSegmentDistance(obj.x, obj.y, p1.x, p1.y, p2.x, p2.y);
-        if (dist < obj.radius) {
-          obj.sliced = true;
+  const dist = pointToSegmentDistance(
+    obj.x,
+    obj.y,
+    p1.x,
+    p1.y,
+    p2.x,
+    p2.y
+  );
 
-          if (obj.isBad) {
-            missesRef.current += 1;
-            setMisses(missesRef.current);
-            if (missesRef.current >= MAX_MISSES) {
-              gameOverRef.current = true;
-              setGameOver(true);
-              submitScore(scoreRef.current);
-            }
-            spawnParticles(obj.x, obj.y, '#ff3b3b');
-          } else {
-            const scoreGain = obj.isBonus ? 2 : 1;
-            scoreRef.current += scoreGain;
-            setScore(scoreRef.current);
-            setLevel(getDifficultyLevel() + 1);
-            spawnParticles(obj.x, obj.y, obj.isBonus ? '#ffd166' : '#2ecc71');
-          }
+  // Smaller hitbox for more accurate slicing
+  const hitboxRadius = obj.radius*1.25;
 
-          spawnHalves(obj, sliceAngle);
-          flashRef.current = { p1, p2, life: 1 };
-          punchRef.current = 1;
-        }
-      });
+  if (dist < hitboxRadius) {
+    obj.sliced = true;
+
+    if (obj.isBad) {
+      missesRef.current += 1;
+      setMisses(missesRef.current);
+
+      if (missesRef.current >= MAX_MISSES) {
+        gameOverRef.current = true;
+        setGameOver(true);
+        submitScore(scoreRef.current);
+      }
+
+      spawnParticles(obj.x, obj.y, '#ff3b3b');
+    } else {
+      const scoreGain = obj.isBonus ? 2 : 1;
+      scoreRef.current += scoreGain;
+      setScore(scoreRef.current);
+
+      const newLevel = getDifficultyLevel() + 1;
+      setLevel(newLevel);
+
+      if (newLevel > lastLevelRef.current) {
+        lastLevelRef.current = newLevel;
+        levelUpAnimRef.current = 1;
+      }
+
+      spawnParticles(
+        obj.x,
+        obj.y,
+        obj.isBonus ? '#ffd166' : '#2ecc71'
+      );
+    }
+
+    spawnHalves(obj, sliceAngle);
+    flashRef.current = { p1, p2, life: 1 };
+    punchRef.current = 1;
+  }
+});
     }
 
     function drawCreature(obj) {
@@ -595,21 +631,81 @@ function spawnObject() {
       ctx.globalAlpha = 1;
       confettiRef.current = confettiRef.current.filter((c) => c.life > 0);
     }
+    function drawLevelUpBanner() {
+      if (levelUpAnimRef.current <= 0) return;
 
-    function drawFlash() {
+      // life goes from 1 down to 0 over time — use it to drive scale + fade
+      const life = levelUpAnimRef.current;
+      levelUpAnimRef.current -= 0.02;
+
+      // pop in fast, hold, then shrink/fade out near the end
+      const scale = life > 0.8 ? 1 + (1 - life) * 1.5 : 1;
+      const alpha = life < 0.3 ? life / 0.3 : 1;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.translate(canvas.width / 2, canvas.height * 0.32);
+      ctx.scale(scale, scale);
+
+      ctx.font = 'bold 52px Arial';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(255,203,5,0.8)';
+      ctx.shadowBlur = 25;
+      ctx.fillStyle = '#ffcb05';
+      ctx.fillText(`LEVEL ${lastLevelRef.current}!`, 0, 0);
+      ctx.shadowBlur = 0;
+
+      ctx.font = 'bold 16px Arial';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('LEVEL UP', 0, -40);
+
+      ctx.restore();
+    }
+
+  function drawFlash() {
       if (!flashRef.current) return;
       const f = flashRef.current;
+
+      // extend the slice line well past the actual swipe points so it
+      // reads as a full blade streak across the screen, not just a dot-to-dot line
+      const dx = f.p2.x - f.p1.x;
+      const dy = f.p2.y - f.p1.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const extend = 260;
+      const ux = (dx / len) * extend;
+      const uy = (dy / len) * extend;
+      const startX = f.p1.x - ux;
+      const startY = f.p1.y - uy;
+      const endX = f.p2.x + ux;
+      const endY = f.p2.y + uy;
+
       ctx.save();
       ctx.globalAlpha = Math.max(f.life, 0);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 6;
       ctx.lineCap = 'round';
+
+      // outer glow pass — soft and wide
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 50;
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 20;
       ctx.beginPath();
-      ctx.moveTo(f.p1.x, f.p1.y);
-      ctx.lineTo(f.p2.x, f.p2.y);
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
       ctx.stroke();
+
+      // sharp bright core pass on top
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
       ctx.restore();
-      f.life -= 0.15;
+
+      f.life -= 0.12;
       if (f.life <= 0) flashRef.current = null;
     }
 
@@ -654,25 +750,28 @@ function spawnObject() {
     }
 
     function drawAvatar() {
+    
       const avatarCanvas = avatarCanvasRef.current;
       if (!avatarCanvas) return;
       const actx = avatarCanvas.getContext('2d');
-      const W = AVATAR_BOX_SIZE;
-      const H = AVATAR_BOX_SIZE;
+      const W = AVATAR_BOX_WIDTH;
+      const H = AVATAR_BOX_HEIGHT;
       actx.clearRect(0, 0, W, H);
+      actx.globalAlpha=1;
 
       const cx = W / 2;
       const cy = H / 2;
-
-      actx.fillStyle = '#0d1b2a';
+actx.clearRect(0, 0, W, H);
+      actx.fillStyle = 'rgba(13, 27, 42, 0.4)';
       actx.fillRect(0, 0, W, H);
 
       const pos = smoothedPosRef.current;
       const targetX = pos ? Math.min(Math.max(pos.x / (canvas.width || 1) * W, 18), W - 18) : cx;
       const targetY = pos ? Math.min(Math.max(pos.y / (canvas.height || 1) * H, 18), H - 18) : cy;
 
+      actx.globalAlpha = 0.35;
       actx.shadowColor = '#3bb4ff';
-      actx.shadowBlur = 20;
+      actx.shadowBlur = 12;
       actx.fillStyle = '#4dd0ff';
       actx.beginPath();
       actx.arc(targetX, targetY, 18, 0, Math.PI * 2);
@@ -684,9 +783,10 @@ function spawnObject() {
       actx.beginPath();
       actx.arc(targetX, targetY, 26, 0, Math.PI * 2);
       actx.stroke();
-
-      actx.fillStyle = '#1d3557';
+      actx.globalAlpha = 1;
+actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
       actx.fillRect(0, H - 24, W, 24);
+      
     }
 
     function drawFrame(timestamp) {
@@ -806,15 +906,18 @@ function spawnObject() {
       drawConfetti();
       drawTrail();
       drawFlash();
+      drawLevelUpBanner();
 
       if (gameOverRef.current) {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = '#ff4444';
         ctx.font = 'bold 44px Arial';
         ctx.textAlign = 'center';
+        ctx.shadowColor = 'rgba(255,68,68,0.6)';
+        ctx.shadowBlur = 20;
         ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 16);
-        ctx.font = '22px Arial';
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffcb05';
+        ctx.font = 'bold 22px Arial';
         ctx.fillText(`Final Score: ${scoreRef.current}`, canvas.width / 2, canvas.height / 2 + 26);
       }
 
@@ -845,6 +948,8 @@ function spawnObject() {
     confettiRef.current = [];
     flashRef.current = null;
     punchRef.current = 0;
+    levelUpAnimRef.current = 0;
+    lastLevelRef.current = 1;
     trailRef.current = [];
     smoothedPosRef.current = null;
     scoreRef.current = 0;
@@ -867,87 +972,82 @@ function spawnObject() {
         style={{ position: 'fixed', top: 0, left: 0, display: 'block' }}
       />
 
-      {status && (
-        <p
-          style={{
-            position: 'fixed',
-            top: '16px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            color: '#fff',
-            fontFamily: 'Arial, sans-serif',
-            fontSize: '14px',
-            fontWeight: 600,
-            textShadow: '0 2px 6px rgba(0,0,0,0.8)',
-            zIndex: 3,
-          }}
-        >
-          {status}
-        </p>
-      )}
+     
 
-      <div
-        style={{
-          position: 'fixed',
-          top: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          display: 'flex',
-          gap: '28px',
-          color: '#fff',
-          fontFamily: 'Arial, sans-serif',
-          fontSize: '20px',
-          fontWeight: 700,
-          textShadow: '0 2px 6px rgba(0,0,0,0.85)',
-          zIndex: 12,
-        }}
-      >
-        <span>Score: {score}</span>
-        <span>Level: {level}</span>
-        <span>Lives: {MAX_MISSES - misses}/{MAX_MISSES}</span>
-      </div>
+ <div
+  style={{
+    position: 'fixed',
+    top: '18px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    gap: '24px',
+    padding: '10px 28px',
+    fontFamily: "'Trebuchet MS', Arial, sans-serif",
+    fontSize: '25px',
+    fontWeight: 800,
+    letterSpacing: '0.3px',
+    textShadow: '0 2px 8px rgba(0,0,0,0.85)',
+    zIndex: 12,
+  }}
+>
+<span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Score: {score}</span>
+  <span style={{ opacity: 0.4, color: '#fff' }}>|</span>
+  <span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Level: {level}</span>
+  <span style={{ opacity: 0.4, color: '#fff' }}>|</span>
+  <span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Lives: {Math.max(MAX_MISSES - misses, 0)}/{MAX_MISSES}</span>
+</div>
 
       {nameSubmitted && !gameOver && (
-        <div
+      <div
           style={{
             position: 'fixed',
             top: '80px',
             left: '20px',
             color: '#fff',
-            background: 'rgba(0,0,0,0.28)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            borderRadius: '12px',
             padding: '14px 18px',
             textAlign: 'left',
             minWidth: '180px',
             fontFamily: 'Arial, sans-serif',
+            textShadow: '0 2px 8px rgba(0,0,0,0.85)',
             zIndex: 12,
           }}
         >
-          <p style={{ fontWeight: 700, margin: '0 0 8px', fontSize: '16px' }}>🏆 Leaderboard</p>
+        <p style={{ fontWeight: 700, margin: '0 0 8px', fontSize: '16px', color: '#fff', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 Leaderboard</p>
           {leaderboard.length > 0 ? (
-            leaderboard.map((entry, i) => (
-              <p key={i} style={{ margin: '4px 0', fontSize: '14px' }}>
-                {i + 1}. {entry.name} — {entry.score}
-              </p>
-            ))
+            leaderboard.map((entry, i) => {
+              let entryColor = '#fff';
+              let glowColor = 'rgba(255,255,255,0.4)';
+              if (i === 0) { entryColor = '#ffcb05'; glowColor = 'rgba(255,203,5,0.6)'; }
+              else if (i === 1) { entryColor = '#4dd0ff'; glowColor = 'rgba(77,208,255,0.5)'; }
+              else if (i === 2) { entryColor = '#ff6b6b'; glowColor = 'rgba(255,107,107,0.5)'; }
+              return (
+                <p key={i} style={{ margin: '4px 0', fontSize: '20px', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
+                  {i + 1}. {entry.name} — {entry.score}
+                </p>
+              );
+            })
           ) : (
-            <p style={{ margin: 0, fontSize: '14px' }}>No scores yet</p>
+            <p style={{ margin: 0, fontSize: '14px', color: '#fff' }}>No scores yet</p>
           )}
         </div>
       )}
 
-      <canvas
+   <canvas
         ref={avatarCanvasRef}
-        width={AVATAR_BOX_SIZE}
-        height={AVATAR_BOX_SIZE}
+        width={AVATAR_BOX_WIDTH}
+        height={AVATAR_BOX_HEIGHT}
         style={{
           position: 'fixed',
           bottom: '30px',
           right: '30px',
           zIndex: 3,
+          background: 'transparent',
         }}
       />
+       
+      
+   
 
       {!nameSubmitted && (
         <div
@@ -962,9 +1062,36 @@ function spawnObject() {
             zIndex: 5,
           }}
         >
-          <p style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '12px' }}>
-            Enter your name to play
+          {/* GAME INSTRUCTIONS */}
+          <p
+            style={{
+    
+    fontSize: '32px',
+    fontWeight: 800,
+    letterSpacing: '2px',
+    marginBottom: '16px',
+    textShadow: '0 0 12px rgba(185,103,255,0.6)',
+  }}>INSTRUCTIONS
+            
           </p>
+<div
+  style={{
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: '12px',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '20px',
+    lineHeight: '1.5',
+   
+  }}
+>
+  <p style={{ margin: '4px 0', color: '#4dd0ff', textShadow: '0 0 8px rgba(77,208,255,0.5)' }}>* Move the blue light to slice creatures</p>
+  <p style={{ margin: '4px 0', color: '#2ecc71', textShadow: '0 0 8px rgba(46,204,113,0.5)' }}>*slicing green gives 1 point</p>
+  <p style={{ margin: '4px 0', color: '#ffcb05', textShadow: '0 0 8px rgba(255,203,5,0.5)' }}>*Slice bonus creatures for +2 points</p>
+  <p style={{ margin: '4px 0', color: '#ff4444', textShadow: '0 0 8px rgba(255,68,68,0.5)' }}>*Avoid red creatures & don't miss 3 times</p>
+</div>
+      
+        
           <input
             type="text"
             value={playerName}
@@ -979,7 +1106,7 @@ function spawnObject() {
             placeholder="Your name"
             style={{
               padding: '10px 16px',
-              fontSize: '16px',
+              fontSize: '20px',
               borderRadius: '8px',
               border: 'none',
               marginBottom: '12px',
@@ -987,7 +1114,7 @@ function spawnObject() {
               textAlign: 'center',
             }}
           />
-          <button
+ <button
          onClick={() => {
               if (playerName.trim()) {
                 setNameSubmitted(true);
@@ -996,75 +1123,90 @@ function spawnObject() {
               }
             }}
             style={{
-              padding: '10px 26px',
+              padding: '12px 32px',
               fontSize: '16px',
-              fontWeight: 700,
+              fontWeight: 800,
               cursor: 'pointer',
               borderRadius: '999px',
-              border: 'none',
-              background: '#fff',
-              color: '#1a1a1a',
+              border: '3px solid #1a1a1a',
+              background: '#ff4444',
+              color: '#fff',
+              boxShadow: '0 4px 0 #cc2222',
+              letterSpacing: '0.5px',
             }}
           >
             Start Game
           </button>
         </div>
       )}
-
       {gameOver && (
         <div
           style={{
             position: 'fixed',
-            top: '50%',
+            top: '25%',
             left: '50%',
             transform: 'translate(-50%, -50%)',
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            gap: '38px',
-            zIndex: 4,
-            width: 'min(760px, 80vw)',
+            justifyContent: 'center',
+            gap: '24px',
+            zIndex: 14,
           }}
-        >
-          <div
+        > 
+       <div
             style={{
-              flex: '0 0 auto',
               color: '#fff',
-              background: 'rgba(0,0,0,0.28)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: '12px',
               padding: '14px 18px',
-              textAlign: 'left',
-              minWidth: '180px',
+              textAlign: 'center',
+              minWidth: '200px',
+              textShadow: '0 2px 8px rgba(0,0,0,0.85)',
             }}
           >
-            <p style={{ fontWeight: 700, margin: '0 0 8px' }}>🏆 Top 3</p>
+           <p style={{ fontWeight: 800, margin: '0 0 8px', color: '#fff', letterSpacing: '0.4px', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 TOP 3</p>
             {leaderboard.length > 0 ? (
-              leaderboard.map((entry, i) => (
-                <p key={i} style={{ margin: '4px 0' }}>
-                  {i + 1}. {entry.name} — {entry.score}
-                </p>
-              ))
+              leaderboard.map((entry, i) => {
+                let entryColor = '#fff';
+                let glowColor = 'rgba(255,255,255,0.4)';
+                if (i === 0) { entryColor = '#ffcb05'; glowColor = 'rgba(255,203,5,0.6)'; }
+                else if (i === 1) { entryColor = '#4dd0ff'; glowColor = 'rgba(77,208,255,0.5)'; }
+                else if (i === 2) { entryColor = '#ff6b6b'; glowColor = 'rgba(255,107,107,0.5)'; }
+                return (
+                  <p key={i} style={{ margin: '4px 0', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
+                    {i + 1}. {entry.name} — {entry.score}
+                  </p>
+                );
+              })
             ) : (
-              <p style={{ margin: 0 }}>No scores yet</p>
+              <p style={{ margin: 0, color: '#fff' }}>No scores yet</p>
             )}
+          
+             
+        
           </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '150px',marginLeft:'55px'}}>
-            <button
-              onClick={handleRestart}
-              style={{
-                padding: '12px 30px',
-                fontSize: '16px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                borderRadius: '999px',
-                border: 'none',
-                background: '#fff',
-                color: '#1a1a1a',
-              }}
-            >
-              Play Again
-            </button>
+<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+<button
+            onClick={handleRestart}
+            style={{
+              position: 'fixed',
+              top: 'calc(50% + 300px)',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              padding: '18px 80px',
+              fontSize: '16px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              borderRadius: '400px',
+              border: '3px solid #1a1a1a',
+              background: '#3b82f6',
+              color: '#fff',
+              boxShadow: '0 4px 0 #2563eb',
+              letterSpacing: '0.5px',
+              zIndex: 14,
+            }}
+          >
+            Play Again
+          </button>
           </div>
         </div>
       )}

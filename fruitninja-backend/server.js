@@ -64,7 +64,7 @@ function sanitizeName(name) {
     .trim()
 
     .replace(/[<>{}]/g, '')
-    .slice(0, 30);
+    .slice(0, 15);
 }
 
 // POST /api/scores — game sends { name, score }, we save it and reply with the top 3
@@ -74,30 +74,43 @@ app.post('/api/scores', (req, res) => {
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ error: 'name is required' });
   }
+
   if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100000) {
     return res.status(400).json({ error: 'invalid score' });
   }
 
   const cleanName = sanitizeName(name);
   if (cleanName.length === 0) {
-   
     return res.status(400).json({ error: 'name is required' });
-
-    
   }
 
+  const roundedScore = Math.floor(score);
   const scores = readScores();
 
-  // actually add the new score to the list, then persist it
-  scores.push({ name: cleanName, score, submittedAt: new Date().toISOString() });
+  // check if this player already has an entry
+  const existingIndex = scores.findIndex(
+    (entry) => entry.name.toLowerCase() === cleanName.toLowerCase()
+  );
+
+  if (existingIndex === -1) {
+    // new player — add a fresh entry
+    scores.push({
+      name: cleanName,
+      score: roundedScore,
+      date: new Date().toISOString(),
+    });
+  } else if (roundedScore > scores[existingIndex].score) {
+    // existing player, but this run beat their old best — update it
+    scores[existingIndex] = {
+      name: cleanName,
+      score: roundedScore,
+      date: new Date().toISOString(),
+    };
+  }
+  // if roundedScore <= their existing best, do nothing — keep their old record
+
   writeScores(scores);
-
-  // highest scores first
-  const top3 = [...scores]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-
-  res.json(top3);
+  res.json({ success: true });
 });
 
 // GET /api/scores/top — lets the frontend fetch the leaderboard anytime (e.g. on page load)
