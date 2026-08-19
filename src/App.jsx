@@ -41,7 +41,8 @@ const BONUS_SPAWN_CHANCE = 0.35;
 const AVATAR_BOX_WIDTH = 200;
 const AVATAR_BOX_HEIGHT = 150;
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// Using relative paths for Vercel Serverless Functions
+const API_URL = '';
 
 function App() {
   const videoRef = useRef(null);
