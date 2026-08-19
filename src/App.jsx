@@ -1119,22 +1119,7 @@ actx.clearRect(0, 0, W, H);
   <span style={{ color: '#ff6b6b', textShadow: '0 0 8px rgba(255,107,107,0.5)' }}>Lives: {Math.max(MAX_MISSES - misses, 0)}/{MAX_MISSES}</span>
 </div>
 
-      {nameSubmitted && !gameOver && (
-        <div style={{ position: 'fixed', top: '25px', right: '30px', zIndex: 15, display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.6)', padding: '10px', borderRadius: '12px', border: '2px solid rgba(255,255,255,0.2)' }}>
-          <button 
-            onClick={() => { trackingColorRef.current = 'blue'; setTrackingColor('blue'); }}
-            style={{ background: trackingColor === 'blue' ? '#4dd0ff' : 'transparent', color: trackingColor === 'blue' ? '#000' : '#4dd0ff', border: '2px solid #4dd0ff', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
-          >
-            🔵 Blue Light
-          </button>
-          <button 
-            onClick={() => { trackingColorRef.current = 'red'; setTrackingColor('red'); }}
-            style={{ background: trackingColor === 'red' ? '#ff4d4d' : 'transparent', color: trackingColor === 'red' ? '#000' : '#ff4d4d', border: '2px solid #ff4d4d', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
-          >
-            🔴 Red Light
-          </button>
-        </div>
-      )}
+
 
       {nameSubmitted && !gameOver && (
       <div
@@ -1234,13 +1219,7 @@ actx.clearRect(0, 0, W, H);
             type="text"
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter' && playerName.trim()) {
-                setNameSubmitted(true);
-                nameSubmittedRef.current = true;
-                playerNameRef.current = playerName.trim();
-              }
-            }}
+            onKeyDown={(e) => e.key === 'Enter' && playerName && (setNameSubmitted(true), nameSubmittedRef.current = true, playerNameRef.current = playerName.trim())}
             placeholder="Your name"
             style={{
               padding: '10px 16px',
@@ -1252,6 +1231,20 @@ actx.clearRect(0, 0, W, H);
               textAlign: 'center',
             }}
           />
+          <div style={{ display: 'flex', gap: '15px', marginBottom: '30px' }}>
+            <button 
+              onClick={() => { trackingColorRef.current = 'blue'; setTrackingColor('blue'); }}
+              style={{ background: trackingColor === 'blue' ? '#4dd0ff' : 'transparent', color: trackingColor === 'blue' ? '#000' : '#4dd0ff', border: '2px solid #4dd0ff', padding: '10px 20px', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
+            >
+              🔵 Blue Light
+            </button>
+            <button 
+              onClick={() => { trackingColorRef.current = 'red'; setTrackingColor('red'); }}
+              style={{ background: trackingColor === 'red' ? '#ff4d4d' : 'transparent', color: trackingColor === 'red' ? '#000' : '#ff4d4d', border: '2px solid #ff4d4d', padding: '10px 20px', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
+            >
+              🔴 Red Light
+            </button>
+          </div>
  <button
          onClick={() => {
               if (playerName.trim()) {
