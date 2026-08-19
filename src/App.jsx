@@ -41,9 +41,8 @@ const BONUS_SPAWN_CHANCE = 0.35;
 const AVATAR_BOX_WIDTH = 200;
 const AVATAR_BOX_HEIGHT = 150;
 
-// Using relative paths for Vercel Serverless Functions
-const API_URL = '';
-
+const UPSTASH_URL = "https://growing-pony-141162.upstash.io";
+const UPSTASH_TOKEN = "gQAAAAAAAidqAAIgcDE2N2MzYzBkNTRhNTc0NGQ5YjQ4MWM5ZmFjZTE1NzJhZA";
 function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -121,15 +120,15 @@ function App() {
 
 async function submitScore(finalScore) {
   try {
-    const res = await fetch(`${API_URL}/api/scores`, {
+    const cleanName = playerNameRef.current.replace(/[^a-zA-Z0-9]/g, '').slice(0, 15);
+    if (!cleanName) return;
+
+    // Direct HTTP POST to Upstash REST API
+    const res = await fetch(`${UPSTASH_URL}/zadd/leaderboard/${Math.floor(finalScore)}/${cleanName}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: playerNameRef.current,
-        score: finalScore,
-      }),
+        Authorization: `Bearer ${UPSTASH_TOKEN}`
+      }
     });
 
     if (!res.ok) {
@@ -139,7 +138,6 @@ async function submitScore(finalScore) {
 
     setScoreSaved(true);
     await fetchLeaderboard();
-
   } catch (err) {
     console.error('Failed to submit score:', err);
   }
@@ -147,9 +145,26 @@ async function submitScore(finalScore) {
 
 async function fetchLeaderboard() {
   try {
-    const res = await fetch(`${API_URL}/api/scores/top`);
+    const res = await fetch(`${UPSTASH_URL}/zrange/leaderboard/0/2/REV/WITHSCORES`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`
+      }
+    });
+    if (!res.ok) return;
+    
     const data = await res.json();
-    setLeaderboard(data);
+    if (data.result) {
+      const formatted = [];
+      // Upstash returns flat array: ["Name1", "100", "Name2", "80"]
+      for (let i = 0; i < data.result.length; i += 2) {
+        formatted.push({ 
+          name: data.result[i], 
+          score: parseInt(data.result[i + 1]) 
+        });
+      }
+      setLeaderboard(formatted);
+    }
   } catch (err) {
     console.error('Failed to fetch leaderboard:', err);
   }
