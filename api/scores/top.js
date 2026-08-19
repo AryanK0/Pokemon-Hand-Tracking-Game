@@ -1,8 +1,4 @@
 const { Redis } = require('@upstash/redis');
-const kv = new Redis({
-  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
-});
 
 module.exports = async function handler(req, res) {
   // Add CORS headers
@@ -24,6 +20,11 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    const kv = new Redis({
+      url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || 'https://growing-pony-141162.upstash.io',
+      token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || 'gQAAAAAAAidqAAIgcDE2N2MzYzBkNTRhNTc0NGQ5YjQ4MWM5ZmFjZTE1NzJhZA',
+    });
+    
     // Get top 3 members sorted by score descending
     const topScores = await kv.zrange('leaderboard', 0, 2, { rev: true, withScores: true });
     

@@ -1,8 +1,4 @@
 const { Redis } = require('@upstash/redis');
-const kv = new Redis({
-  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
-});
 
 function sanitizeName(name) {
   return name
@@ -49,6 +45,11 @@ module.exports = async function handler(req, res) {
   const roundedScore = Math.floor(score);
   
   try {
+    const kv = new Redis({
+      url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || 'https://growing-pony-141162.upstash.io',
+      token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || 'gQAAAAAAAidqAAIgcDE2N2MzYzBkNTRhNTc0NGQ5YjQ4MWM5ZmFjZTE1NzJhZA',
+    });
+    
     const currentScore = await kv.zscore('leaderboard', cleanName);
     
     if (currentScore === null || roundedScore > currentScore) {
