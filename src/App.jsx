@@ -85,6 +85,8 @@ function App() {
   const [scoreSaved, setScoreSaved] = useState(false);
   const [isTopScore, setIsTopScore] = useState(false);
   const topScoreTriggeredRef = useRef(false);
+  const trackingColorRef = useRef('blue');
+  const [trackingColor, setTrackingColor] = useState('blue');
 
   useEffect(() => {
     navigator.mediaDevices
@@ -186,7 +188,7 @@ async function fetchLeaderboard() {
 
     let prevRawPoint = null;
 
-    function detectBlueLight() {
+    function detectLight() {
       motionCtx.save();
       motionCtx.scale(-1, 1);
       motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
@@ -201,20 +203,28 @@ async function fetchLeaderboard() {
       let sumX = 0;
       let sumY = 0;
       let count = 0;
+      
+      const isBlue = trackingColorRef.current === 'blue';
 
       for (let y = 0; y < MOTION_H; y += 2) {
         for (let x = 0; x < MOTION_W; x += 2) {
           const i = (y * MOTION_W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2];
           
-          if (b > r && b > g && b > 80) {
-            const [h, s, v] = rgbToHsv(r, g, b);
-            if (h > 190 && h < 270 && s > 0.4 && v > 0.4) {
-              const score = s * v * (b - Math.max(r, g));
-              if (score > maxScore) {
-                maxScore = score;
-                bestX = x;
-                bestY = y;
+          if (isBlue) {
+            if (b > r && b > g && b > 80) {
+              const [h, s, v] = rgbToHsv(r, g, b);
+              if (h > 190 && h < 270 && s > 0.4 && v > 0.4) {
+                const score = s * v * (b - Math.max(r, g));
+                if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
+              }
+            }
+          } else {
+            if (r > b && r > g && r > 80) {
+              const [h, s, v] = rgbToHsv(r, g, b);
+              if ((h < 30 || h > 330) && s > 0.4 && v > 0.4) {
+                const score = s * v * (r - Math.max(b, g));
+                if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
               }
             }
           }
@@ -228,10 +238,11 @@ async function fetchLeaderboard() {
           const i = (y * MOTION_W + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2];
           const [h, s, v] = rgbToHsv(r, g, b);
-          if (h > 190 && h < 270 && s > 0.3 && v > 0.3) {
-            sumX += x;
-            sumY += y;
-            count++;
+          
+          if (isBlue) {
+            if (h > 190 && h < 270 && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
+          } else {
+            if ((h < 30 || h > 330) && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
           }
         }
       }
@@ -874,15 +885,16 @@ actx.clearRect(0, 0, W, H);
       const targetY = pos ? Math.min(Math.max(pos.y / (canvas.height || 1) * H, 18), H - 18) : cy;
 
       actx.globalAlpha = 0.35;
-      actx.shadowColor = '#3bb4ff';
+      const isRed = trackingColorRef.current === 'red';
+      actx.shadowColor = isRed ? '#ff3b3b' : '#3bb4ff';
       actx.shadowBlur = 12;
-      actx.fillStyle = '#4dd0ff';
+      actx.fillStyle = isRed ? '#ff4d4d' : '#4dd0ff';
       actx.beginPath();
       actx.arc(targetX, targetY, 18, 0, Math.PI * 2);
       actx.fill();
 
       actx.shadowBlur = 0;
-      actx.strokeStyle = '#b7ecff';
+      actx.strokeStyle = isRed ? '#ffb7b7' : '#b7ecff';
       actx.lineWidth = 2;
       actx.beginPath();
       actx.arc(targetX, targetY, 26, 0, Math.PI * 2);
@@ -942,7 +954,7 @@ actx.clearRect(0, 0, W, H);
         ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
         ctx.restore();
 
-        const motionPoint = detectBlueLight();
+        const motionPoint = detectLight();
         if (motionPoint) {
           trailRef.current.push({...motionPoint});
           if (trailRef.current.length > TRAIL_LENGTH) trailRef.current.shift();
@@ -1106,6 +1118,23 @@ actx.clearRect(0, 0, W, H);
   <span style={{ opacity: 0.4, color: '#fff' }}>|</span>
   <span style={{ color: '#ff6b6b', textShadow: '0 0 8px rgba(255,107,107,0.5)' }}>Lives: {Math.max(MAX_MISSES - misses, 0)}/{MAX_MISSES}</span>
 </div>
+
+      {nameSubmitted && !gameOver && (
+        <div style={{ position: 'fixed', top: '25px', right: '30px', zIndex: 15, display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.6)', padding: '10px', borderRadius: '12px', border: '2px solid rgba(255,255,255,0.2)' }}>
+          <button 
+            onClick={() => { trackingColorRef.current = 'blue'; setTrackingColor('blue'); }}
+            style={{ background: trackingColor === 'blue' ? '#4dd0ff' : 'transparent', color: trackingColor === 'blue' ? '#000' : '#4dd0ff', border: '2px solid #4dd0ff', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
+          >
+            🔵 Blue Light
+          </button>
+          <button 
+            onClick={() => { trackingColorRef.current = 'red'; setTrackingColor('red'); }}
+            style={{ background: trackingColor === 'red' ? '#ff4d4d' : 'transparent', color: trackingColor === 'red' ? '#000' : '#ff4d4d', border: '2px solid #ff4d4d', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
+          >
+            🔴 Red Light
+          </button>
+        </div>
+      )}
 
       {nameSubmitted && !gameOver && (
       <div
