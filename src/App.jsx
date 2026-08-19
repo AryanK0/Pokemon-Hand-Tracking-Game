@@ -41,7 +41,6 @@ const BONUS_SPAWN_CHANCE = 0.35;
 const AVATAR_BOX_WIDTH = 200;
 const AVATAR_BOX_HEIGHT = 150;
 
-// Backend URL — change this if you deploy the backend somewhere else
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function App() {
@@ -58,8 +57,9 @@ function App() {
   const sparkleCounterRef = useRef(0);
   const celebrationCounterRef = useRef(0);
   const celebrationTriggeredRef = useRef(false);
+  const strikesRef = useRef(0);
   const punchRef = useRef(0);
-  const levelUpAnimRef = useRef(0); // 0 = not showing, >0 = counts down while showing
+  const levelUpAnimRef = useRef(0);
   const lastLevelRef = useRef(1);
   const lastSpawnRef = useRef(0);
   const trailRef = useRef([]);
@@ -351,26 +351,27 @@ async function fetchLeaderboard() {
 
     function getDifficultyLevel() {
       return Math.min(
-        Math.floor(scoreRef.current / DIFFICULTY_STEP),
-        MAX_DIFFICULTY_LEVEL
+        1 + Math.floor(strikesRef.current / 5),
+        10
       );
     }
 
     function getSpawnInterval() {
       const lvl = getDifficultyLevel();
-      const t = lvl / MAX_DIFFICULTY_LEVEL;
+      if (lvl >= 8) return 250;
+      const t = (lvl - 1) / 9;
       return BASE_SPAWN_INTERVAL - t * (BASE_SPAWN_INTERVAL - MIN_SPAWN_INTERVAL);
     }
 
     function getGravity() {
       const lvl = getDifficultyLevel();
-      const t = lvl / MAX_DIFFICULTY_LEVEL;
+      const t = (lvl - 1) / 9;
       return BASE_GRAVITY + t * (MAX_GRAVITY - BASE_GRAVITY);
     }
 
     function getLaunchSpeed() {
       const lvl = getDifficultyLevel();
-      const t = lvl / MAX_DIFFICULTY_LEVEL;
+      const t = (lvl - 1) / 9;
       return BASE_LAUNCH_SPEED + t * (MAX_LAUNCH_SPEED - BASE_LAUNCH_SPEED);
     }
 
@@ -382,7 +383,7 @@ function spawnObject() {
       // Spawn from a safe in-screen range so objects stay visible and land inside the monitor.
       const marginX = 120;
       const startX = marginX + Math.random() * (canvas.width - marginX * 2);
-      const startY = canvas.height + 30;
+      const startY = canvas.height - 50;
 
       // Randomize the launch direction: angle measured from straight up.
       // 0 = straight up, negative = leaning left, positive = leaning right.
@@ -546,6 +547,7 @@ function spawnObject() {
     } else {
       const scoreGain = obj.isBonus ? 2 : 1;
       scoreRef.current += scoreGain;
+      strikesRef.current += 1;
       setScore(scoreRef.current);
 
       const newLevel = getDifficultyLevel() + 1;
@@ -686,29 +688,28 @@ function spawnObject() {
       if (levelUpAnimRef.current <= 0) return;
 
       // life goes from 1 down to 0 over time — use it to drive scale + fade
-      const life = levelUpAnimRef.current;
-      levelUpAnimRef.current -= 0.02;
+      levelUpAnimRef.current -= 0.015;
 
-      // pop in fast, hold, then shrink/fade out near the end
-      const scale = life > 0.8 ? 1 + (1 - life) * 1.5 : 1;
-      const alpha = life < 0.3 ? life / 0.3 : 1;
+      const animProgress = 1 - levelUpAnimRef.current;
+      const alpha = Math.max(0, Math.sin(levelUpAnimRef.current * Math.PI));
+      const slideX = -100 + (animProgress * 200);
 
       ctx.save();
-      ctx.globalAlpha = Math.max(alpha, 0);
-      ctx.translate(canvas.width / 2, canvas.height * 0.32);
-      ctx.scale(scale, scale);
+      ctx.globalAlpha = alpha;
+      ctx.translate(canvas.width / 2 + slideX, canvas.height / 3);
+      ctx.rotate(-0.05);
 
-      ctx.font = 'bold 52px Arial';
+      ctx.font = 'bold 64px Arial';
       ctx.textAlign = 'center';
-      ctx.shadowColor = 'rgba(255,203,5,0.8)';
-      ctx.shadowBlur = 25;
-      ctx.fillStyle = '#ffcb05';
+      ctx.shadowColor = 'rgba(77,208,255,0.8)';
+      ctx.shadowBlur = 30;
+      ctx.fillStyle = '#4dd0ff';
       ctx.fillText(`LEVEL ${lastLevelRef.current}!`, 0, 0);
       ctx.shadowBlur = 0;
 
-      ctx.font = 'bold 16px Arial';
-      ctx.fillStyle = '#fff';
-      ctx.fillText('LEVEL UP', 0, -40);
+      ctx.font = 'bold 20px Arial';
+      ctx.fillStyle = '#ffcb05';
+      ctx.fillText('LEVEL UP', 0, -50);
 
       ctx.restore();
     }
@@ -835,8 +836,6 @@ actx.clearRect(0, 0, W, H);
       actx.arc(targetX, targetY, 26, 0, Math.PI * 2);
       actx.stroke();
       actx.globalAlpha = 1;
-actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
-      actx.fillRect(0, H - 24, W, 24);
       
     }
 
@@ -1013,6 +1012,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
     setMisses(0);
     setGameOver(false);
     setLevel(1);
+    strikesRef.current = 0;
   }
 
   return (
@@ -1042,19 +1042,19 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
     zIndex: 12,
   }}
 >
-<span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Score: {score}</span>
+<span style={{ color: '#ffcb05', textShadow: '0 0 8px rgba(255,203,5,0.6)' }}>Score: {score}</span>
   <span style={{ opacity: 0.4, color: '#fff' }}>|</span>
-  <span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Level: {level}</span>
+  <span style={{ color: '#4dd0ff', textShadow: '0 0 8px rgba(77,208,255,0.5)' }}>Level: {level}</span>
   <span style={{ opacity: 0.4, color: '#fff' }}>|</span>
-  <span style={{ color: '#fff', textShadow: '0 0 8px rgba(255,255,255,0.55)' }}>Lives: {Math.max(MAX_MISSES - misses, 0)}/{MAX_MISSES}</span>
+  <span style={{ color: '#ff6b6b', textShadow: '0 0 8px rgba(255,107,107,0.5)' }}>Lives: {Math.max(MAX_MISSES - misses, 0)}/{MAX_MISSES}</span>
 </div>
 
       {nameSubmitted && !gameOver && (
       <div
           style={{
             position: 'fixed',
-            top: '80px',
-            left: '20px',
+            top: '25px',
+            left: '30px',
             color: '#fff',
             padding: '14px 18px',
             textAlign: 'left',
@@ -1064,7 +1064,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
             zIndex: 12,
           }}
         >
-        <p style={{ fontWeight: 700, margin: '0 0 8px', fontSize: '16px', color: '#fff', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 Leaderboard</p>
+        <p style={{ fontWeight: 700, margin: '0 0 12px', fontSize: '22px', color: '#fff', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 Leaderboard</p>
           {leaderboard.length > 0 ? (
             leaderboard.map((entry, i) => {
               let entryColor = '#fff';
@@ -1073,7 +1073,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
               else if (i === 1) { entryColor = '#4dd0ff'; glowColor = 'rgba(77,208,255,0.5)'; }
               else if (i === 2) { entryColor = '#ff6b6b'; glowColor = 'rgba(255,107,107,0.5)'; }
               return (
-                <p key={i} style={{ margin: '4px 0', fontSize: '20px', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
+                <p key={i} style={{ margin: '8px 0', fontSize: '26px', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
                   {i + 1}. {entry.name} — {entry.score}
                 </p>
               );
@@ -1214,7 +1214,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
               textShadow: '0 2px 8px rgba(0,0,0,0.85)',
             }}
           >
-           <p style={{ fontWeight: 800, margin: '0 0 8px', color: '#fff', letterSpacing: '0.4px', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 TOP 3</p>
+           <p style={{ fontWeight: 800, margin: '0 0 16px', fontSize: '32px', color: '#fff', letterSpacing: '0.4px', textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>🏆 TOP 3</p>
             {leaderboard.length > 0 ? (
               leaderboard.map((entry, i) => {
                 let entryColor = '#fff';
@@ -1223,7 +1223,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
                 else if (i === 1) { entryColor = '#4dd0ff'; glowColor = 'rgba(77,208,255,0.5)'; }
                 else if (i === 2) { entryColor = '#ff6b6b'; glowColor = 'rgba(255,107,107,0.5)'; }
                 return (
-                  <p key={i} style={{ margin: '4px 0', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
+                  <p key={i} style={{ margin: '8px 0', fontSize: '28px', color: entryColor, textShadow: `0 0 8px ${glowColor}` }}>
                     {i + 1}. {entry.name} — {entry.score}
                   </p>
                 );
