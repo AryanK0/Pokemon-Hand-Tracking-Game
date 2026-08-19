@@ -58,6 +58,8 @@ function App() {
   const celebrationCounterRef = useRef(0);
   const celebrationTriggeredRef = useRef(false);
   const strikesRef = useRef(0);
+  const leftPadHitRef = useRef(0);
+  const rightPadHitRef = useRef(0);
   const punchRef = useRef(0);
   const levelUpAnimRef = useRef(0);
   const lastLevelRef = useRef(1);
@@ -714,6 +716,55 @@ function spawnObject() {
       ctx.restore();
     }
 
+    function drawPads() {
+      if (leftPadHitRef.current > 0) leftPadHitRef.current -= 0.05;
+      if (rightPadHitRef.current > 0) rightPadHitRef.current -= 0.05;
+
+      const padWidth = 16;
+      const padHeight = canvas.height * 0.7;
+      const padY = canvas.height * 0.15;
+
+      if (leftPadHitRef.current > 0) {
+        ctx.save();
+        const glow = leftPadHitRef.current;
+        const offset = glow * -10;
+        ctx.fillStyle = `rgba(77, 208, 255, ${0.1 + glow * 0.7})`;
+        ctx.shadowColor = '#4dd0ff';
+        ctx.shadowBlur = 10 + glow * 30;
+        ctx.beginPath();
+        ctx.roundRect(15 + offset, padY, padWidth, padHeight, 8);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.fillStyle = 'rgba(77, 208, 255, 0.15)';
+        ctx.beginPath();
+        ctx.roundRect(15, padY, padWidth, padHeight, 8);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (rightPadHitRef.current > 0) {
+        ctx.save();
+        const glow = rightPadHitRef.current;
+        const offset = glow * 10;
+        ctx.fillStyle = `rgba(77, 208, 255, ${0.1 + glow * 0.7})`;
+        ctx.shadowColor = '#4dd0ff';
+        ctx.shadowBlur = 10 + glow * 30;
+        ctx.beginPath();
+        ctx.roundRect(canvas.width - 15 - padWidth + offset, padY, padWidth, padHeight, 8);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.fillStyle = 'rgba(77, 208, 255, 0.15)';
+        ctx.beginPath();
+        ctx.roundRect(canvas.width - 15 - padWidth, padY, padWidth, padHeight, 8);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
   function drawFlash() {
       if (!flashRef.current) return;
       const f = flashRef.current;
@@ -916,11 +967,16 @@ actx.clearRect(0, 0, W, H);
         obj.y += obj.vy;
         obj.x += obj.vx;
 
-        const minX = 60;
-        const maxX = canvas.width - 60;
-        if (obj.x < minX || obj.x > maxX) {
-          obj.x = Math.min(Math.max(obj.x, minX), maxX);
+        const minX = 70;
+        const maxX = canvas.width - 70;
+        if (obj.x < minX) {
+          obj.x = minX;
           obj.vx *= -0.35;
+          leftPadHitRef.current = 1;
+        } else if (obj.x > maxX) {
+          obj.x = maxX;
+          obj.vx *= -0.35;
+          rightPadHitRef.current = 1;
         }
 
       
@@ -956,6 +1012,7 @@ actx.clearRect(0, 0, W, H);
       drawConfetti();
       drawTrail();
       drawFlash();
+      drawPads();
       drawLevelUpBanner();
 
       if (gameOverRef.current) {
