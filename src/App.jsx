@@ -18,7 +18,7 @@ import gold3 from './assets/gold3.png';
 
 import './App.css';
 
-const TRAIL_LENGTH = 10
+const TRAIL_LENGTH = 15
 const MOTION_THRESHOLD = 25;
 const SAMPLE_STEP = 3;
 const SMOOTHING = 0.50;
@@ -42,7 +42,7 @@ const AVATAR_BOX_WIDTH = 200;
 const AVATAR_BOX_HEIGHT = 150;
 
 // Backend URL — change this if you deploy the backend somewhere else
-const API_URL = 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function App() {
   const videoRef = useRef(null);
@@ -89,7 +89,7 @@ function App() {
       .then((stream) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          setStatus('Camera ready — point a blue light at the screen');
+          setStatus('Camera ready — point your blue light at the screen!');
         }
       })
       .catch((err) => {
@@ -155,6 +155,112 @@ async function fetchLeaderboard() {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
+    const motionCanvas = document.createElement('canvas');
+    const MOTION_W = 160;
+    const MOTION_H = 120;
+    motionCanvas.width = MOTION_W;
+    motionCanvas.height = MOTION_H;
+    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+
+    function rgbToHsv(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, v = max;
+      const d = max - min;
+      s = max === 0 ? 0 : d / max;
+      if (max === min) {
+        h = 0;
+      } else {
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return [h * 360, s, v];
+    }
+
+    let prevRawPoint = null;
+
+    function detectBlueLight() {
+      motionCtx.save();
+      motionCtx.scale(-1, 1);
+      motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
+      motionCtx.restore();
+
+      const frame = motionCtx.getImageData(0, 0, MOTION_W, MOTION_H);
+      const data = frame.data;
+
+      let bestX = 0;
+      let bestY = 0;
+      let maxScore = 0;
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+
+      for (let y = 0; y < MOTION_H; y += 2) {
+        for (let x = 0; x < MOTION_W; x += 2) {
+          const i = (y * MOTION_W + x) * 4;
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          
+          if (b > r && b > g && b > 80) {
+            const [h, s, v] = rgbToHsv(r, g, b);
+            if (h > 190 && h < 270 && s > 0.4 && v > 0.4) {
+              const score = s * v * (b - Math.max(r, g));
+              if (score > maxScore) {
+                maxScore = score;
+                bestX = x;
+                bestY = y;
+              }
+            }
+          }
+        }
+      }
+
+      if (maxScore < 5) return null;
+
+      for (let y = Math.max(0, bestY - 15); y < Math.min(MOTION_H, bestY + 15); y += 1) {
+        for (let x = Math.max(0, bestX - 15); x < Math.min(MOTION_W, bestX + 15); x += 1) {
+          const i = (y * MOTION_W + x) * 4;
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          const [h, s, v] = rgbToHsv(r, g, b);
+          if (h > 190 && h < 270 && s > 0.3 && v > 0.3) {
+            sumX += x;
+            sumY += y;
+            count++;
+          }
+        }
+      }
+
+      if (count === 0) return null;
+
+      const scaleX = canvas.width / MOTION_W;
+      const scaleY = canvas.height / MOTION_H;
+      let rawX = (sumX / count) * scaleX;
+      let rawY = (sumY / count) * scaleY;
+
+      if (prevRawPoint) {
+        const dist = Math.hypot(rawX - prevRawPoint.x, rawY - prevRawPoint.y);
+        if (dist > canvas.width * 0.4) {
+          return null;
+        }
+      }
+      prevRawPoint = { x: rawX, y: rawY };
+
+      if (!smoothedPosRef.current) {
+        smoothedPosRef.current = { x: rawX, y: rawY };
+      } else {
+        smoothedPosRef.current = {
+          x: smoothedPosRef.current.x + (rawX - smoothedPosRef.current.x) * 0.45,
+          y: smoothedPosRef.current.y + (rawY - smoothedPosRef.current.y) * 0.45,
+        };
+      }
+
+      return { x: smoothedPosRef.current.x, y: smoothedPosRef.current.y };
+    }
+
+
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -162,12 +268,6 @@ async function fetchLeaderboard() {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    const motionCanvas = document.createElement('canvas');
-    const MOTION_W = 160;
-    const MOTION_H = 120;
-    motionCanvas.width = MOTION_W;
-    motionCanvas.height = MOTION_H;
-    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
 
     let animationId;
 
@@ -393,56 +493,7 @@ function spawnObject() {
       });
     }
 
-    function detectBlueLight() {
-      motionCtx.save();
-      motionCtx.scale(-1, 1);
-      motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
-      motionCtx.restore();
 
-      const frame = motionCtx.getImageData(0, 0, MOTION_W, MOTION_H);
-      const data = frame.data;
-
-      let sumX = 0;
-      let sumY = 0;
-      let totalWeight = 0;
-
-      for (let y = 0; y < MOTION_H; y += SAMPLE_STEP) {
-        for (let x = 0; x < MOTION_W; x += SAMPLE_STEP) {
-          const i = (y * MOTION_W + x) * 4;
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          const brightness = (r + g + b) / 3;
-          const blueBias = b - Math.max(r, g);
-
-          // Detect a bright blue object rather than arbitrary hand motion.
-          if (b > 80 && brightness > 35 && blueBias > 20 && b > r * 1.2 && b > g * 1.2) {
-            const weight = b * 0.7 + brightness * 0.8 + Math.max(blueBias, 0);
-            sumX += x * weight;
-            sumY += y * weight;
-            totalWeight += weight;
-          }
-        }
-      }
-
-      if (totalWeight < 350) return null;
-
-      const scaleX = canvas.width / MOTION_W;
-      const scaleY = canvas.height / MOTION_H;
-      const rawX = (sumX / totalWeight) * scaleX;
-      const rawY = (sumY / totalWeight) * scaleY;
-
-      if (!smoothedPosRef.current) {
-        smoothedPosRef.current = { x: rawX, y: rawY };
-      } else {
-        smoothedPosRef.current = {
-          x: smoothedPosRef.current.x + (rawX - smoothedPosRef.current.x) * SMOOTHING,
-          y: smoothedPosRef.current.y + (rawY - smoothedPosRef.current.y) * SMOOTHING,
-        };
-      }
-
-      return { x: smoothedPosRef.current.x, y: smoothedPosRef.current.y };
-    }
 
     function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
       const dx = x2 - x1;
@@ -475,8 +526,8 @@ function spawnObject() {
     p2.y
   );
 
-  // Smaller hitbox for more accurate slicing
-  const hitboxRadius = obj.radius*1.25;
+  // Slightly larger hitbox for more generous/reliable slicing in a fair environment
+  const hitboxRadius = obj.radius * 1.5;
 
   if (dist < hitboxRadius) {
     obj.sliced = true;
@@ -842,7 +893,7 @@ actx.fillStyle = 'rgba(29, 53, 87, 0.4)';
 
         const motionPoint = detectBlueLight();
         if (motionPoint) {
-          trailRef.current.push(motionPoint);
+          trailRef.current.push({...motionPoint});
           if (trailRef.current.length > TRAIL_LENGTH) trailRef.current.shift();
         }
       } else {
