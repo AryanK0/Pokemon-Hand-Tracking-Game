@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import creature1 from './assets/creature1.png';
 import creature2 from './assets/creature2.png';
 import creature3 from './assets/creature3.png';
@@ -85,6 +86,8 @@ function App() {
   const [isTopScore, setIsTopScore] = useState(false);
   const topScoreTriggeredRef = useRef(false);
   const trackingColorRef = useRef('blue');
+  const handLandmarkerRef = useRef(null);
+  const [isModelLoading, setIsModelLoading] = useState(false);
   const [trackingColor, setTrackingColor] = useState('blue');
 
   useEffect(() => {
