@@ -91,6 +91,32 @@ function App() {
   const [trackingColor, setTrackingColor] = useState('blue');
 
   useEffect(() => {
+    async function loadModel() {
+      setIsModelLoading(true);
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+        );
+        const landmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+            delegate: 'GPU',
+          },
+          runningMode: 'VIDEO',
+          numHands: 1,
+        });
+        handLandmarkerRef.current = landmarker;
+      } catch (err) {
+        console.error('Failed to load hand tracking model:', err);
+      } finally {
+        setIsModelLoading(false);
+      }
+    }
+    loadModel();
+  }, []);
+
+  useEffect(() => {
     navigator.mediaDevices
       .getUserMedia({ video: true })
       .then((stream) => {
@@ -207,70 +233,95 @@ async function fetchLeaderboard() {
     let prevRawPoint = null;
 
     function detectLight() {
-      motionCtx.save();
-      motionCtx.scale(-1, 1);
-      motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
-      motionCtx.restore();
+      const isHandMode = trackingColorRef.current === 'hand';
 
-      const frame = motionCtx.getImageData(0, 0, MOTION_W, MOTION_H);
-      const data = frame.data;
+      let rawX = 0;
+      let rawY = 0;
 
-      let bestX = 0;
-      let bestY = 0;
-      let maxScore = 0;
-      let sumX = 0;
-      let sumY = 0;
-      let count = 0;
-      
-      const isBlue = trackingColorRef.current === 'blue';
+      if (isHandMode) {
+        if (!handLandmarkerRef.current || !video || video.readyState !== video.HAVE_ENOUGH_DATA) return null;
+        let results;
+        try {
+          results = handLandmarkerRef.current.detectForVideo(video, performance.now());
+        } catch (e) {
+          return null;
+        }
 
-      for (let y = 0; y < MOTION_H; y += 2) {
-        for (let x = 0; x < MOTION_W; x += 2) {
-          const i = (y * MOTION_W + x) * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          
-          if (isBlue) {
-            if (b > r && b > g && b > 80) {
-              const [h, s, v] = rgbToHsv(r, g, b);
-              if (h > 190 && h < 270 && s > 0.4 && v > 0.4) {
-                const score = s * v * (b - Math.max(r, g));
-                if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
+        if (results && results.landmarks && results.landmarks.length > 0) {
+          // Landmark 8 is the Index Finger Tip
+          const indexFinger = results.landmarks[0][8];
+          // Mirror horizontally because the camera view is flipped
+          rawX = (1 - indexFinger.x) * canvas.width;
+          rawY = indexFinger.y * canvas.height;
+        } else {
+          return null;
+        }
+      } else {
+        motionCtx.save();
+        motionCtx.scale(-1, 1);
+        motionCtx.drawImage(video, -MOTION_W, 0, MOTION_W, MOTION_H);
+        motionCtx.restore();
+
+        const frame = motionCtx.getImageData(0, 0, MOTION_W, MOTION_H);
+        const data = frame.data;
+
+        let bestX = 0;
+        let bestY = 0;
+        let maxScore = 0;
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        
+        const isBlue = trackingColorRef.current === 'blue';
+
+        for (let y = 0; y < MOTION_H; y += 2) {
+          for (let x = 0; x < MOTION_W; x += 2) {
+            const i = (y * MOTION_W + x) * 4;
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            
+            if (isBlue) {
+              if (b > r && b > g && b > 80) {
+                const [h, s, v] = rgbToHsv(r, g, b);
+                if (h > 190 && h < 270 && s > 0.4 && v > 0.4) {
+                  const score = s * v * (b - Math.max(r, g));
+                  if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
+                }
               }
-            }
-          } else {
-            if (r > b && r > g && r > 80) {
-              const [h, s, v] = rgbToHsv(r, g, b);
-              if ((h < 30 || h > 330) && s > 0.4 && v > 0.4) {
-                const score = s * v * (r - Math.max(b, g));
-                if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
+            } else {
+              if (r > b && r > g && r > 80) {
+                const [h, s, v] = rgbToHsv(r, g, b);
+                if ((h < 30 || h > 330) && s > 0.4 && v > 0.4) {
+                  const score = s * v * (r - Math.max(b, g));
+                  if (score > maxScore) { maxScore = score; bestX = x; bestY = y; }
+                }
               }
             }
           }
         }
-      }
 
-      if (maxScore < 5) return null;
+        if (maxScore < 5) return null;
 
-      for (let y = Math.max(0, bestY - 15); y < Math.min(MOTION_H, bestY + 15); y += 1) {
-        for (let x = Math.max(0, bestX - 15); x < Math.min(MOTION_W, bestX + 15); x += 1) {
-          const i = (y * MOTION_W + x) * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          const [h, s, v] = rgbToHsv(r, g, b);
-          
-          if (isBlue) {
-            if (h > 190 && h < 270 && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
-          } else {
-            if ((h < 30 || h > 330) && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
+        for (let y = Math.max(0, bestY - 15); y < Math.min(MOTION_H, bestY + 15); y += 1) {
+          for (let x = Math.max(0, bestX - 15); x < Math.min(MOTION_W, bestX + 15); x += 1) {
+            const i = (y * MOTION_W + x) * 4;
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            const [h, s, v] = rgbToHsv(r, g, b);
+            
+            if (isBlue) {
+              if (h > 190 && h < 270 && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
+            } else {
+              if ((h < 30 || h > 330) && s > 0.3 && v > 0.3) { sumX += x; sumY += y; count++; }
+            }
           }
         }
+
+        if (count === 0) return null;
+
+        const scaleX = canvas.width / MOTION_W;
+        const scaleY = canvas.height / MOTION_H;
+        rawX = (sumX / count) * scaleX;
+        rawY = (sumY / count) * scaleY;
       }
-
-      if (count === 0) return null;
-
-      const scaleX = canvas.width / MOTION_W;
-      const scaleY = canvas.height / MOTION_H;
-      let rawX = (sumX / count) * scaleX;
-      let rawY = (sumY / count) * scaleY;
 
       if (prevRawPoint) {
         const dist = Math.hypot(rawX - prevRawPoint.x, rawY - prevRawPoint.y);
@@ -903,16 +954,18 @@ actx.clearRect(0, 0, W, H);
       const targetY = pos ? Math.min(Math.max(pos.y / (canvas.height || 1) * H, 18), H - 18) : cy;
 
       actx.globalAlpha = 0.35;
-      const isRed = trackingColorRef.current === 'red';
-      actx.shadowColor = isRed ? '#ff3b3b' : '#3bb4ff';
+      const mode = trackingColorRef.current;
+      const themeColor = mode === 'red' ? '#ff4d4d' : (mode === 'hand' ? '#2ecc71' : '#4dd0ff');
+      const themeBorder = mode === 'red' ? '#ffb7b7' : (mode === 'hand' ? '#a3e4d7' : '#b7ecff');
+      actx.shadowColor = themeColor;
       actx.shadowBlur = 12;
-      actx.fillStyle = isRed ? '#ff4d4d' : '#4dd0ff';
+      actx.fillStyle = themeColor;
       actx.beginPath();
       actx.arc(targetX, targetY, 18, 0, Math.PI * 2);
       actx.fill();
 
       actx.shadowBlur = 0;
-      actx.strokeStyle = isRed ? '#ffb7b7' : '#b7ecff';
+      actx.strokeStyle = themeBorder;
       actx.lineWidth = 2;
       actx.beginPath();
       actx.arc(targetX, targetY, 26, 0, Math.PI * 2);
@@ -1223,13 +1276,14 @@ actx.clearRect(0, 0, W, H);
     fontFamily: 'Arial, sans-serif',
     fontSize: '20px',
     lineHeight: '1.5',
-   
   }}
 >
-  <p style={{ margin: '4px 0', color: '#4dd0ff', textShadow: '0 0 8px rgba(77,208,255,0.5)' }}>* Move the blue light to slice creatures</p>
-  <p style={{ margin: '4px 0', color: '#2ecc71', textShadow: '0 0 8px rgba(46,204,113,0.5)' }}>*slicing green gives 1 point</p>
-  <p style={{ margin: '4px 0', color: '#ffcb05', textShadow: '0 0 8px rgba(255,203,5,0.5)' }}>*Slice bonus creatures for +2 points</p>
-  <p style={{ margin: '4px 0', color: '#ff4444', textShadow: '0 0 8px rgba(255,68,68,0.5)' }}>*Avoid red creatures & don't miss 3 times</p>
+  <p style={{ margin: '4px 0', color: trackingColor === 'hand' ? '#2ecc71' : (trackingColor === 'red' ? '#ff6b6b' : '#4dd0ff'), textShadow: '0 0 8px rgba(255,255,255,0.5)' }}>
+    * {trackingColor === 'hand' ? 'Point your finger & move your hand to slice' : `Move the ${trackingColor} light to slice creatures`}
+  </p>
+  <p style={{ margin: '4px 0', color: '#2ecc71', textShadow: '0 0 8px rgba(46,204,113,0.5)' }}>* Slicing green gives 1 point</p>
+  <p style={{ margin: '4px 0', color: '#ffcb05', textShadow: '0 0 8px rgba(255,203,5,0.5)' }}>* Slice bonus creatures for +2 points</p>
+  <p style={{ margin: '4px 0', color: '#ff4444', textShadow: '0 0 8px rgba(255,68,68,0.5)' }}>* Avoid red creatures & don't miss 3 times</p>
 </div>
       
         
@@ -1249,7 +1303,7 @@ actx.clearRect(0, 0, W, H);
               textAlign: 'center',
             }}
           />
-          <div style={{ display: 'flex', gap: '15px', marginBottom: '30px' }}>
+          <div style={{ display: 'flex', gap: '15px', marginBottom: '30px', flexWrap: 'wrap', justifyContent: 'center' }}>
             <button 
               onClick={() => { trackingColorRef.current = 'blue'; setTrackingColor('blue'); }}
               style={{ background: trackingColor === 'blue' ? '#4dd0ff' : 'transparent', color: trackingColor === 'blue' ? '#000' : '#4dd0ff', border: '2px solid #4dd0ff', padding: '10px 20px', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
@@ -1261,6 +1315,13 @@ actx.clearRect(0, 0, W, H);
               style={{ background: trackingColor === 'red' ? '#ff4d4d' : 'transparent', color: trackingColor === 'red' ? '#000' : '#ff4d4d', border: '2px solid #ff4d4d', padding: '10px 20px', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
             >
               🔴 Red Light
+            </button>
+            <button 
+              onClick={() => { trackingColorRef.current = 'hand'; setTrackingColor('hand'); }}
+              style={{ background: trackingColor === 'hand' ? '#2ecc71' : 'transparent', color: trackingColor === 'hand' ? '#000' : '#2ecc71', border: '2px solid #2ecc71', padding: '10px 20px', borderRadius: '8px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s', position: 'relative' }}
+            >
+              ✋ Hand Tracking
+              {isModelLoading && <span style={{ position: 'absolute', top: '-10px', right: '-10px', background: '#ffcb05', color: '#000', fontSize: '11px', padding: '2px 6px', borderRadius: '10px', fontWeight: 800 }}>Loading...</span>}
             </button>
           </div>
  <button
